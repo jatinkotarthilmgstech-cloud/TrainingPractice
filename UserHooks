@@ -1,1 +1,656 @@
+?
 
+
+Understanding and Using Application Program Interface (API) User Hooks in Oracle HRMS [ID 73170.1]	 
+ 	Modified 07-JUN-2010     Type HOWTO     Status PUBLISHED	 
+
+Applies to:
+Oracle Human Resources
+Information in this document applies to any platform.
+Goal
+To explain how to add extra logic to the Business APIs using User Hooks.  This document explains the advantages and disadvantages of User Hooks, and how to implement them.
+
+For further reading , see the API User Hooks section in the Oracle Human Resources Management Systems Implementation Guide
+Solution
+Checked for relevance on 11-May-2009
+
+CONTENTS
+---------
+
+1. General Introduction
+2. Advantages
+3. Disadvantages
+4. Implementing User Hooks
+5. Available User Hooks
+  5.1. Business Process Hooks
+  5.2. Row Handler Hooks
+  5.3. Available Data Values
+6. Using User Hooks
+  6.1. Writing Custom PL/SQL procedure
+  6.2. Registering User Hook
+  6.3. Running the Preprocessor
+  6.4. Running the Custom Procedure
+
+1. General Introduction
+-----------------------
+
+API User Hooks allow users to extend the business logic of the standard
+business rules that are executed by APIs. This is done by allowing custom
+procedures to be called at specific points in the standard APIs. For instance,
+a user may want to implement User Hooks for one of the following reasons:
+
+     . To extend the validation of data beyond what the standard system
+       provides.
+
+     . To maintain data held in extra customer specific tables (not part
+       of Oracle Applications) as it is entered.
+
+     . To send alerts when particular events happen within Oracle Human
+       Resources Management System(HRMS.)
+
+User Hooks offer similar functionality to the Custom Library, but at the
+database end rather than the front end.
+
+The table HR_API_HOOKS contains all the hooks available for each API module
+listed in the HR_API_MODULES table.
+
+2. Advantages
+-------------
+
+User Hooks allow extra business logic to be inserted in exactly the right
+place in the application without needing to bespoke any of the standard
+APIs. Upgrades are no problem as the hooks will be regenerated during the
+upgrade process. However, Oracle reserves the right to change the HR schema at
+any time, which may necessitate modifications to customized PL/SQL procedures.
+
+The main advantages of hooks over custom library are that they only need to be
+implemented in one place whereas custom libary modifications could conceivably
+have to be made on several clients. They are also immediately available to 
+any interface that calls the API. For example, Forms, Self Service, Data Pump,
+etc.  
+         
+3. Disadvantages
+----------------
+
+A customized procedure called by a User Hook will only work if the API that the
+call has been added to is executed. It sounds obvious. However, at the time of
+writing there are still a large number of forms that don't call APIs. The Enter
+Person Information form is one of them. Therefore, any hook added to the
+Create_Employee API will not be executed from this form. It is policy to 
+eventually convert all existing forms to call APIs but this will not be a short
+term process. Unfortunately,there is no list available which indicates which
+forms call APIs and which do not. The only certainty is that all new forms will
+call APIs. A sensible approach to any implementation of configuration logic,
+therefore, if required to be executed by a standard form, is for the user to 
+use a hook if the form calls a supported API, and custom library if not.
+
+4. Implementing User Hooks
+--------------------------
+
+There are basically 4 steps to implementing API User Hooks.
+
+    1. Choose the API you wish to hook some extra logic to.
+
+    2. Write the PL/SQL procedure that you wish to be called by the hook.
+
+    3. Register or associate the procedure you have written with one or
+       more specific user hooks.
+
+    4. Run the pre-processor program which builds the logic to execute your
+       PL/SQL procedure from the hook specified in 3.
+
+Step 1 will be dealt with in more detail in Section 5 , and 2 to 4. in 
+Section 6.
+
+5. Available User Hooks
+-----------------------
+
+Hooks are not available to alternative interface APIs,such as 
+CREATE_GB_EMPLOYEE. Any extra logic should be associated with the main API. In
+this case, CREATE_EMPLOYEE. A list of alternative APIs,current at the time of 
+writing follows:
+
+select module_name from hr_api_modules
+where api_module_type = 'AI'
+MODULE_NAME                                                                     
+------------------------------                                                  
+CREATE_GB_APPLICANT                                                             
+CREATE_GB_EMPLOYEE                                                              
+CREATE_GB_PERSONAL_PAY_METHOD                                                   
+CREATE_GB_PERSON_ADDRESS                                                        
+CREATE_GB_SECONDARY_EMP_ASG                                                     
+CREATE_US_APPLICANT                                                             
+CREATE_US_EMPLOYEE                                                              
+CREATE_US_PERSONAL_PAY_METHOD                                                   
+CREATE_US_PERSON_ADDRESS                                                        
+CREATE_US_SECONDARY_EMP_ASG                                                     
+UPDATE_GB_EMP_ASG                                                               
+UPDATE_GB_PERSON                                                                
+UPDATE_GB_PERSONAL_PAY_METHOD                                                   
+UPDATE_GB_PERSON_ADDRESS                                                        
+UPDATE_US_EMP_ASG                                                               
+UPDATE_US_PERSON                                                                
+UPDATE_US_PERSONAL_PAY_METHOD                                                   
+UPDATE_US_PERSON_ADDRESS                                                        
+
+User Hooks are also not provided for utility type APIs such as 
+CREATE_MESSAGE_LINE.
+
+A list of each API,it's hooks, and the parameters available to a procedure
+called by that hook, can be obtained by running the script 
+$PER_TOP/admin/sql/hrahkpar.sql.
+
+There are 5 different types of User Hook. Two for Business Process APIs
+(Before Process and After Process), and 3 more for Row Handler APIs (After
+Insert,After Update and After Delete).
+
+5.1 Business Process Hooks
+--------------------------
+
+The Business Process hooks should be used if extra logic is required on top of
+the standard business process logic. For instance, CREATE_EMPLOYEE,
+UPDATE_ELEMENT_ENTRY,etc. A full list can be obtained by running the following
+script:
+
+select module_name from hr_api_modules
+where api_module_type='BP'
+
+The two types of Business Process hook available are:
+
+Before Process - These hooks execute logic before the main API logic. The
+                 majority of validation will not have taken place. No database
+                 changes will have been made.
+
+After Process  - These hooks will execute after the main API validation has
+                 completed and database changes made. If the main validation
+                 failed then the user hook will not be called.
+
+The following sql retrieves the hook details of the After Process
+hook for the CREATE_EMPLOYEE business process.
+
+select ahk.api_hook_id,
+       ahk.api_module_id,
+       ahk.hook_package,
+       ahk.hook_procedure
+  from hr_api_hooks ahk,
+       hr_api_modules ahm 
+ where ahm.module_name='CREATE_EMPLOYEE'
+       and ahm.api_module_type = 'BP'
+       and ahk.api_hook_type = 'AP'
+       and ahk.api_module_id=ahm.api_module_id;
+
+API_HOOK_ID API_MODULE_ID  HOOK_PACKAGE                   HOOK_PROCEDURE
+----------- -------------  --------------- -------------- ---------------
+         63            28  HR_EMPLOYEE_BK1                CREATE_EMPLOYEE_A
+
+
+5.2 Row Handler Hooks
+---------------------
+  
+The Row Handler hooks should be used if extra logic is required prior to
+performing an Insert,Update or Delete on a specific table. As all the main APIs
+call the row handlers, these hooks would be executed by any API that updates
+the specific table. A full list of the Row Handler APIs can be obtained by
+running the following sql:
+
+select module_name from hr_api_modules
+where api_module_type='RH'
+
+The 3 types of Row Handler hook available are:
+
+After Insert
+After Update 
+After Delete
+
+The following sql retrieves hook details for the After Insert hook for
+the PER_ALL_PEOPLE_F table.
+
+  1   select ahk.api_hook_id,
+  2          ahk.hook_package,
+  3          ahk.hook_procedure
+  4     from hr_api_hooks ahk,
+  5          hr_api_modules ahm
+  6   where (ahm.module_name='PER_ALL_PEOPLE_F'
+  7      or  ahm.module_name='PER_PEOPLE_F')
+  8     and ahm.api_module_type = 'RH'
+  9     and ahk.api_hook_type = 'AI'
+ 10*   and ahk.api_module_id=ahm.api_module_id
+SQL> /
+
+API_HOOK_ID HOOK_PACKAGE                   HOOK_PROCEDURE
+----------- ------------------------------ ------------------------------
+         66 PER_PER_RKI                    AFTER_INSERT
+
+*** Note:
+The module_name should be PER_ALL_PEOPLE_F, but on early versions of R11
+PER_PEOPLE_F was erroneously used. 
+
+5.3 Available Data Values
+-------------------------
+
+In general any value known inside the calling API can be passed as a read_only
+parameter to the custom user hook code. Row who columns and the p_validate
+column are exceptions. The standard API naming convention is used. Example:
+p_ followed by the database column name. The hooks available for the Row
+Handlers are slightly different in terms of the data values available:
+
+After Insert - only column values that can be populated or derived during an
+               insert are available.
+
+After Update - Two sets of values are available. The new values and the old 
+               values. The values on the updated record can be referenced by
+               adding p_ prefix to the database column. The values that existed
+               prior to the update statement can also be referenced by adding
+               p_ prefix and a _o suffix to the database column name.
+
+After Delete - Only old values with p_ prefix and _o suffix are available.
+
+Old values are not available on Before Process,After Process and After Insert 
+hooks.
+
+A complete list of parameters available for each hook can be obtained by
+running the script $PER_TOP/admin/sql/hrahkpar.sql.
+
+6. Using User Hooks
+-------------------
+
+After choosing the type of hook required and the location for it, the hook code
+has to be written. It then needs to be registered, and finally the hook package
+has to be modified to call it. The example used in this section describes the 
+implementation of an After Process hook in the CREATE_EMPLOYEE Business Process 
+API.
+
+6.1 Writing the custom PL/SQL procedure
+---------------------------------------
+
+The hook code must be written in a PL/SQL server-side package procedure. The
+procedure is always called if registered (unless the main validation logic
+errors first), and, any conditional logic must be implemented in the code
+and an application error raised if required. 
+
+No commits or rollbacks are allowed in the hook procedure. These are always 
+performed after the API has been called whether it be in a PL/SQL wrapper or 
+form.
+
+When the PL/SQL package has been created, it must be compiled successfully
+on the database.
+
+Fig 1 below illustrates how a user hook can be used to implement some
+extra validation on name and nationality. An error is raised if the
+validation fails.
+
+Fig 1.
+------
+
+create or replace Package scoop_nationality_check as
+procedure polish_name_check
+   (p_last_name         in  varchar2
+   ,p_nationality       in  varchar2);
+end scoop_nationality_check;
+/
+Create or Replace Package Body scoop_nationality_check as
+procedure polish_name_check
+   (p_last_name         in  varchar2
+   ,p_nationality       in  varchar2)
+is
+begin
+-- When the first name entered is a polish name then check that the
+-- nationality entered is Polish
+if p_last_name = 'Chrosicka' then
+   if p_nationality != 'POL' then
+     dbms_standard.raise_application_error
+       (num => -20999
+       ,msg => 'Nationality must be Polish');
+     end if;
+end if;
+end polish_name_check;
+end scoop_nationality_check;
+/
+exit;
+
+6.2 Registering the User Hook
+-----------------------------
+
+The next step is to link the custom package procedure referred to in
+section 6.1 to the hook package. 
+
+The table that holds this information is HR_API_HOOK_CALLS.
+
+SQL> DESC HR_API_HOOK_CALLS
+ Name                            Null?    Type
+ ------------------------------- -------- ----
+ API_HOOK_CALL_ID                NOT NULL NUMBER(15)
+ API_HOOK_ID                     NOT NULL NUMBER(15)
+ API_HOOK_CALL_TYPE              NOT NULL VARCHAR2(30)
+ LEGISLATION_CODE                         VARCHAR2(30)
+ SEQUENCE                        NOT NULL NUMBER(15)
+ ENABLED_FLAG                    NOT NULL VARCHAR2(30)
+ CALL_PACKAGE                             VARCHAR2(30)
+ CALL_PROCEDURE                           VARCHAR2(30)
+ PRE_PROCESSOR_DATE                       DATE
+ ENCODED_ERROR                            VARCHAR2(2000)
+ STATUS                          NOT NULL VARCHAR2(30)
+ OBJECT_VERSION_NUMBER                    NUMBER(15)
+ LAST_UPDATE_DATE                         DATE
+ LAST_UPDATED_BY                          NUMBER(15)
+ LAST_UPDATE_LOGIN                        NUMBER(15)
+ CREATED_BY                               NUMBER(15)
+ CREATION_DATE                            DATE
+
+There are 3 special procedures that maintain data in this table. These are
+
+. hr_api_hook_call_api.create_api_hook_call
+. hr_api_hook_call_api.update_api_hook_call
+. hr_api_hook_call_api.delete_api_hook_call
+
+Fig 2 shows how to register the user hook.
+
+Fig 2.
+------
+
+declare
+
+l_api_hook_call_id      number;
+l_object_version_number number;
+
+begin
+
+hr_api_hook_call_api.create_api_hook_call
+ (p_validate              => false,
+  p_effective_date        => to_date('01-JUL-1999','DD-MON-YYYY'),
+  p_api_hook_id           => 63,
+  p_api_hook_call_type    => 'PP',
+  p_sequence              => 3000,
+  p_enabled_flag          => 'Y',
+  p_call_package          => 'SCOOP_NATIONALITY_CHECK',
+  p_call_procedure        => 'POLISH_NAME_CHECK',
+  p_api_hook_call_id      => l_api_hook_call_id,
+  p_object_version_number => l_object_version_number);
+end;
+
+   a. See section 5.1 to get api_hook_id.
+
+   b. The hook mechanism only supports calls to package procedures currently
+      so api_hook_call_type must be PP.
+
+   c. Sequence numbers > 2000 are recommended, as sequences < than 2000 are
+      reserved for Oracle seeded logic which needs to be processed first.
+      Please note that you can add any number of hooks to the same API, and
+      order them using the sequence.
+
+Fig 3 shows a call to delete a link.
+
+Fig 3.
+------
+
+declare
+
+l_api_hook_call_id      number := 2;
+l_object_version_number number := 3;
+
+begin
+
+hr_api_hook_call_api.delete_api_hook_call
+ (p_validate              => false,
+  p_api_hook_call_id      => l_api_hook_call_id,
+  p_object_version_number => l_object_version_number);
+end;
+
+The above call is deleting a specific user hook. Please note any changes made to the HR_API_HOOK_CALLS table, be they via the supplied procedures or not,
+will only be effective once the pre-processor has been run.
+
+
+6.3 Running the Pre-Processor
+-----------------------------
+
+Adding rows to the HR_API_HOOK_CALLS table by itself is not sufficient to
+enable this extra logic to be called. The pre-processor program must be called
+first. This will look at the definitions in the table and build another package
+body in the database which is known as the hook package body. If successful, the
+pre-processor will hard code the calls to the custom package procedures into the
+hook package body.  If no extra logic is implemented the hook package body is 
+still created but without any calls to custom procedures.
+
+During upgrades the pre-processor program will be automatically called to create
+the hook package bodies.
+
+To run the pre-processor run one of the following commands:
+
+cd $PER_TOP/admin/sql
+Log into SQLPLUS as the APPS user
+SQL> @hrahkall.sql
+
+or
+
+SQL> @hrahkone.sql
+
+The first script will create all hook package bodies, whilst the second will
+create hook package bodies for one API module only, and prompt for that
+api_module_id. Refer to the results of the query executed in section 5.1 
+to obtain the api_module_id.
+
+Fig 4 shows the section of code that does the call to the custom procedure
+in the package HR_EMPLOYEE_BK1 after the Pre-Processor has been run.
+
+Fig 4.
+------
+
+package body HR_EMPLOYEE_BK1 as
+/* $Header: peempapi.pkb 110.4 97/08/29 08:40:21 generated ship $ */
+
+-- Code generated by the Oracle HRMS API Hook Pre-processor
+-- Created on 99/07/14 12:01:28 (YY/MM/DD HH:MM:SS)
+procedure CREATE_EMPLOYEE_A
+(P_HIRE_DATE in DATE
+,P_BUSINESS_GROUP_ID in NUMBER
+,P_LAST_NAME in VARCHAR2
+,P_SEX in VARCHAR2
+,P_PERSON_TYPE_ID in NUMBER
+,P_PER_COMMENTS in VARCHAR2
+,P_DATE_EMPLOYEE_DATA_VERIFIED in DATE
+,P_DATE_OF_BIRTH in DATE
+,P_EMAIL_ADDRESS in VARCHAR2
+,P_EMPLOYEE_NUMBER in VARCHAR2
+,P_EXPENSE_CHECK_SEND_TO_ADDRES in VARCHAR2
+,P_FIRST_NAME in VARCHAR2
+,P_KNOWN_AS in VARCHAR2
+,P_MARITAL_STATUS in VARCHAR2
+,P_MIDDLE_NAMES in VARCHAR2
+,P_NATIONALITY in VARCHAR2
+,P_NATIONAL_IDENTIFIER in VARCHAR2
+,P_PREVIOUS_LAST_NAME in VARCHAR2
+,P_REGISTERED_DISABLED_FLAG in VARCHAR2
+,P_TITLE in VARCHAR2
+,P_VENDOR_ID in NUMBER
+,P_WORK_TELEPHONE in VARCHAR2
+,P_ATTRIBUTE_CATEGORY in VARCHAR2
+,P_ATTRIBUTE1 in VARCHAR2
+,P_ATTRIBUTE2 in VARCHAR2
+...
+...
+,P_ATTRIBUTE29 in VARCHAR2
+,P_ATTRIBUTE30 in VARCHAR2
+,P_PER_INFORMATION_CATEGORY in VARCHAR2
+,P_PER_INFORMATION1 in VARCHAR2
+,P_PER_INFORMATION2 in VARCHAR2
+...
+...
+,P_PER_INFORMATION29 in VARCHAR2
+,P_PER_INFORMATION30 in VARCHAR2
+,P_BACKGROUND_CHECK_STATUS in VARCHAR2
+,P_BACKGROUND_DATE_CHECK in DATE
+,P_BLOOD_TYPE in VARCHAR2
+,P_CORRESPONDENCE_LANGUAGE in VARCHAR2
+,P_FAST_PATH_EMPLOYEE in VARCHAR2
+,P_FTE_CAPACITY in NUMBER
+,P_HONORS in VARCHAR2
+,P_INTERNAL_LOCATION in VARCHAR2
+,P_LAST_MEDICAL_TEST_BY in VARCHAR2
+,P_LAST_MEDICAL_TEST_DATE in DATE
+,P_MAILSTOP in VARCHAR2
+,P_OFFICE_NUMBER in VARCHAR2
+,P_ON_MILITARY_SERVICE in VARCHAR2
+,P_PRE_NAME_ADJUNCT in VARCHAR2
+,P_PROJECTED_START_DATE in DATE
+,P_RESUME_EXISTS in VARCHAR2
+,P_RESUME_LAST_UPDATED in DATE
+,P_SECOND_PASSPORT_EXISTS in VARCHAR2
+,P_STUDENT_STATUS in VARCHAR2
+,P_WORK_SCHEDULE in VARCHAR2
+,P_SUFFIX in VARCHAR2
+,P_PERSON_ID in NUMBER
+,P_ASSIGNMENT_ID in NUMBER
+,P_PER_OBJECT_VERSION_NUMBER in NUMBER
+,P_ASG_OBJECT_VERSION_NUMBER in NUMBER
+,P_PER_EFFECTIVE_START_DATE in DATE
+,P_PER_EFFECTIVE_END_DATE in DATE
+,P_FULL_NAME in VARCHAR2
+,P_PER_COMMENT_ID in NUMBER
+,P_ASSIGNMENT_SEQUENCE in NUMBER
+,P_ASSIGNMENT_NUMBER in VARCHAR2
+,P_NAME_COMBINATION_WARNING in BOOLEAN
+,P_ASSIGN_PAYROLL_WARNING in BOOLEAN
+)is
+l_commit_unit_number number;
+l_legislation_code   varchar2(30);
+begin
+hr_utility.set_location('Entering: HR_EMPLOYEE_BK1.CREATE_EMPLOYEE_A', 10);
+l_commit_unit_number := hr_api.return_commit_unit;
+if hr_api.call_cus_hooks then
+SCOOP_NATIONALITY_CHECK.POLISH_NAME_CHECK
+(P_LAST_NAME => P_LAST_NAME
+,P_NATIONALITY => P_NATIONALITY
+);
+end if;
+hr_api.validate_commit_unit(l_commit_unit_number, 'CREATE_EMPLOYEE', 'AP');
+hr_utility.set_location(' Leaving: HR_EMPLOYEE_BK1.CREATE_EMPLOYEE_A', 20);
+end CREATE_EMPLOYEE_A;
+
+If you want to disable a custom package procedure, then the API
+hr_api_hook_call_api.update_api_hook_call must be executed to set the 
+p_enabled_flag to N. Afterwards the pre-processor must be run to recreate the
+hook package body. To re-enable,set the p_enabled_flag back to Y and re-run
+pre-processor.
+
+Similarly if you permanently delete the definition using the delete API
+described in section 6.2, you must run the pre-processor afterwards to remove 
+the hard coded call (see Fig 4) from the hook package body.
+
+If the Pre-Processor errors, it will set the status on HR_API_HOOK_CALLS
+to I for Invalid. Status will be V for Valid if successful. If it errors the
+message is written to the ENCODED_ERROR column. This can be read using the
+following SQL:
+
+declare
+l_encoded_error varchar2(2000);
+l_user_read_text varchar2(2000);
+begin
+   Substitute ??? with the value held in the
+   HR_API_HOOK_CALLS.ENCODED_ERROR column.
+l_encoded_error := ???;
+fnd_message.set_encoded(encoded_error);
+l_user_read_text := fnd_message.get;
+end;
+
+6.4 Running the Custom Procedure
+--------------------------------
+
+Fig 5 shows a call to the create_employee API which inputs data to force the
+custom procedure shown in section 6.1 to fail. Fig 6 shows the error message
+raised as a result.
+
+Fig 5.
+------
+
+declare
+
+l_per_object_version_number    number;
+l_asg_object_version_number    number;
+l_person_id                    number;
+l_assignment_id                number;
+l_per_effective_start_date     date;
+l_per_effective_end_date        date;
+l_full_name                    varchar2(60);
+l_per_comment_id               number;
+l_assignment_sequence          number;
+l_assignment_number            varchar2(30);
+l_name_combination_warning     boolean;
+l_assign_payroll_warning       boolean;
+l_emp_number                   varchar2(30);
+
+begin
+
+l_emp_number := '15';
+
+hr_employee_api.create_employee
+  (p_validate                      =>     false
+  ,p_hire_date                     =>     to_date('15-jun-1999','dd-mon-yyyy') 
+  ,p_business_group_id             =>     147 
+  ,p_last_name                     =>     'Chrosicka' 
+  ,p_sex                           =>     'F' 
+  ,p_date_of_birth                 =>     to_date('15-dec-1975','dd-mon-yyyy') 
+  ,p_employee_number               =>     l_emp_number 
+  ,p_first_name                    =>     'Ania'
+  ,p_nationality                   =>     'BEL'
+  ,p_person_id                     =>     l_person_id
+  ,p_assignment_id                 =>     l_assignment_id
+  ,p_per_object_version_number     =>     l_per_object_version_number
+  ,p_asg_object_version_number     =>     l_asg_object_version_number
+  ,p_per_effective_start_date      =>     l_per_effective_start_date 
+  ,p_per_effective_end_date        =>     l_per_effective_end_date
+  ,p_full_name                     =>     l_full_name 
+  ,p_per_comment_id                =>     l_per_comment_id 
+  ,p_assignment_sequence           =>     l_assignment_sequence 
+  ,p_assignment_number             =>     l_assignment_number 
+  ,p_name_combination_warning      =>     l_name_combination_warning
+  ,p_assign_payroll_warning        =>     l_assign_payroll_warning
+);
+end;
+
+Fig 6.
+------
+
+declare
+*
+ERROR at line 1:
+ORA-20999: Nationality must be Polish
+ORA-06512: at "APPS.SCOOP_NATIONALITY_CHECK", line 11
+ORA-06512: at "APPS.HR_EMPLOYEE_BK1", line 131
+ORA-06512: at "APPS.HR_EMPLOYEE_API", line 504
+ORA-06512: at line 21
+
+If the error is raised in a form then the following error displays. The detail
+displays when clicking on History.
+
+    FRM-40735:  trigger raised unhandled exception ORA-20999 
+
+Detecting whether a reported error is raised by a custom procedure or not may be
+a challenging exercise for a support analyst. However, that is usually the case
+with any bespoke code. The clues to look for are
+
+    a. Familiarity with standard error messages. Is this a standard HRMS
+       message?
+
+    b. The error code may give a clue. Example; if a particular range has been
+       used to raise application errors in the custom procedure. In this case
+       ORA-20999. Usually the range 20000 - 20999 are reserved for raising
+       errors from triggers and packaged procedures.
+
+    c. The package reporting the error is the real give away. HR_EMPLOYEE_BK1
+       is a hook procedure.
+________________________________________________________________________________
+                                                       Oracle Support Services
+
+
+Show Related Information Related
+
+Products
+Oracle E-Business Suite > Human Capital Management > Human Resources > Oracle Human Resources
+Keywords
+HR_API_HOOK_CALLS; HR_API_HOOKS; HOOKS
+Errors
+ORA-6512; ORA-20999; FRM-40735
+
+Back to topBack to top
+
+Rate this document 
